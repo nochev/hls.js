@@ -1591,7 +1591,7 @@ var BufferController = function (_EventHandler) {
 
     // the value that we have set mediasource.duration to
     // (the actual duration may be tweaked slighly by the browser)
-    var _this = _possibleConstructorReturn(this, (BufferController.__proto__ || Object.getPrototypeOf(BufferController)).call(this, hls, _events2.default.MEDIA_ATTACHING, _events2.default.MEDIA_DETACHING, _events2.default.MANIFEST_PARSED, _events2.default.BUFFER_RESET, _events2.default.BUFFER_APPENDING, _events2.default.BUFFER_CODECS, _events2.default.BUFFER_EOS, _events2.default.BUFFER_FLUSHING, _events2.default.LEVEL_UPDATED));
+    var _this = _possibleConstructorReturn(this, (BufferController.__proto__ || Object.getPrototypeOf(BufferController)).call(this, hls, _events2.default.MEDIA_ATTACHING, _events2.default.MEDIA_DETACHING, _events2.default.MANIFEST_PARSED, _events2.default.BUFFER_RESET, _events2.default.BUFFER_APPENDING, _events2.default.BUFFER_CODECS, _events2.default.BUFFER_EOS, _events2.default.BUFFER_FLUSHING, _events2.default.LEVEL_PTS_UPDATED, _events2.default.LEVEL_UPDATED));
 
     _this._msDuration = null;
     // the value that we want to set mediaSource.duration to
@@ -1601,6 +1601,7 @@ var BufferController = function (_EventHandler) {
     _this.onsbue = _this.onSBUpdateEnd.bind(_this);
     _this.onsbe = _this.onSBUpdateError.bind(_this);
     _this.pendingTracks = {};
+    _this.tracks = {};
     return _this;
   }
 
@@ -1608,6 +1609,29 @@ var BufferController = function (_EventHandler) {
     key: 'destroy',
     value: function destroy() {
       _eventHandler2.default.prototype.destroy.call(this);
+    }
+  }, {
+    key: 'onLevelPtsUpdated',
+    value: function onLevelPtsUpdated(data) {
+      var type = data.type;
+      var audioTrack = this.tracks.audio;
+
+      if (type === 'audio' && audioTrack && audioTrack.container === 'audio/mpeg') {
+        // Chrome audio mp3 track
+        var audioBuffer = this.sourceBuffer.audio;
+        var timeDistance = Math.abs(audioBuffer.timestampOffset - data.start);
+
+        // adjust timestamp offset if time distance is greater than 100ms
+        if (timeDistance > 0.1) {
+          if (!audioBuffer.updating) {
+            _logger.logger.log('change mpeg audio timestamp offset from ' + audioBuffer.timestampOffset + ' to ' + data.start);
+            audioBuffer.timestampOffset = data.start;
+          } else if (!this.audioTimestampOffset) {
+            audioBuffer.abort();
+            this.audioTimestampOffset = data.start;
+          }
+        }
+      }
     }
   }, {
     key: 'onManifestParsed',
@@ -1670,6 +1694,7 @@ var BufferController = function (_EventHandler) {
         this.mediaSource = null;
         this.media = null;
         this.pendingTracks = {};
+        this.tracks = {};
         this.sourceBuffer = {};
         this.flushRange = [];
         this.segments = [];
@@ -1718,6 +1743,13 @@ var BufferController = function (_EventHandler) {
   }, {
     key: 'onSBUpdateEnd',
     value: function onSBUpdateEnd() {
+      // update timestampOffset
+      if (this.audioTimestampOffset) {
+        var audioBuffer = this.sourceBuffer.audio;
+        _logger.logger.log('change mpeg audio timestamp offset from ' + audioBuffer.timestampOffset + ' to ' + this.audioTimestampOffset);
+        audioBuffer.timestampOffset = this.audioTimestampOffset;
+        this.audioTimestampOffset = null;
+      }
 
       if (this._needsFlush) {
         this.doFlush();
@@ -1796,6 +1828,7 @@ var BufferController = function (_EventHandler) {
             var sb = sourceBuffer[trackName] = mediaSource.addSourceBuffer(mimeType);
             sb.addEventListener('updateend', this.onsbue);
             sb.addEventListener('error', this.onsbe);
+            this.tracks[trackName] = { codec: codec, container: track.container };
             track.buffer = sb;
           } catch (err) {
             _logger.logger.error('error while trying to add sourceBuffer:' + err.message);
@@ -3898,7 +3931,7 @@ var StreamController = function (_EventHandler) {
 
         var drift = _levelHelper2.default.updateFragPTSDTS(level.details, frag.sn, data.startPTS, data.endPTS, data.startDTS, data.endDTS),
             hls = this.hls;
-        hls.trigger(_events2.default.LEVEL_PTS_UPDATED, { details: level.details, level: this.level, drift: drift });
+        hls.trigger(_events2.default.LEVEL_PTS_UPDATED, { details: level.details, level: this.level, drift: drift, type: data.type, start: data.startPTS, end: data.endPTS });
 
         // has remuxer dropped video frames located before first keyframe ?
         if (data.type === 'video') {
