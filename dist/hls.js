@@ -1619,15 +1619,23 @@ var BufferController = function (_EventHandler) {
       if (type === 'audio' && audioTrack && audioTrack.container === 'audio/mpeg') {
         // Chrome audio mp3 track
         var audioBuffer = this.sourceBuffer.audio;
-        var timeDistance = Math.abs(audioBuffer.timestampOffset - data.start);
+        var delta = Math.abs(audioBuffer.timestampOffset - data.start);
 
-        // adjust timestamp offset if time distance is greater than 100ms
-        if (timeDistance > 0.1) {
-          if (!audioBuffer.updating) {
-            _logger.logger.log('change mpeg audio timestamp offset from ' + audioBuffer.timestampOffset + ' to ' + data.start);
-            audioBuffer.timestampOffset = data.start;
-          } else if (!this.audioTimestampOffset) {
+        // adjust timestamp offset if time delta is greater than 100ms
+        if (delta > 0.1) {
+          var updating = audioBuffer.updating;
+
+          try {
             audioBuffer.abort();
+          } catch (err) {
+            updating = true;
+            _logger.logger.warn('can not abort audio buffer: ' + err);
+          }
+
+          if (!updating) {
+            _logger.logger.warn('change mpeg audio timestamp offset from ' + audioBuffer.timestampOffset + ' to ' + data.start);
+            audioBuffer.timestampOffset = data.start;
+          } else {
             this.audioTimestampOffset = data.start;
           }
         }
@@ -1746,9 +1754,9 @@ var BufferController = function (_EventHandler) {
       // update timestampOffset
       if (this.audioTimestampOffset) {
         var audioBuffer = this.sourceBuffer.audio;
-        _logger.logger.log('change mpeg audio timestamp offset from ' + audioBuffer.timestampOffset + ' to ' + this.audioTimestampOffset);
+        _logger.logger.warn('change mpeg audio timestamp offset from ' + audioBuffer.timestampOffset + ' to ' + this.audioTimestampOffset);
         audioBuffer.timestampOffset = this.audioTimestampOffset;
-        this.audioTimestampOffset = null;
+        delete this.audioTimestampOffset;
       }
 
       if (this._needsFlush) {
@@ -3865,7 +3873,8 @@ var StreamController = function (_EventHandler) {
             }
           }
           // HE-AAC is broken on Android, always signal audio codec as AAC even if variant manifest states otherwise
-          if (ua.indexOf('android') !== -1) {
+          if (ua.indexOf('android') !== -1 && track.container !== 'audio/mpeg') {
+            // Exclude mpeg audio
             audioCodec = 'mp4a.40.2';
             _logger.logger.log('Android: force audio codec to' + audioCodec);
           }
