@@ -242,7 +242,7 @@ $(document).ready(function() {
       levelCapping = JSON.parse(getURLParam('levelCapping',-1)),
       defaultAudioCodec = getURLParam('defaultAudioCodec',undefined);
   var video = $('#video')[0];
-  video.volume = 0.05;
+  video.volume = 1;
   $("#currentVersion").html("Hls version:" + Hls.version);
 
   loadStream(decodeURIComponent(getURLParam('src','http://www.streambox.fr/playlists/x36xhzz/x36xhzz.m3u8')));
