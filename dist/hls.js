@@ -1619,8 +1619,8 @@ var BufferController = function (_EventHandler) {
       if (type === 'audio' && audioTrack && audioTrack.container === 'audio/mpeg') {
         // Chrome audio mp3 track
         var audioBuffer = this.sourceBuffer.audio;
-        var delta = Math.abs(audioBuffer.timestampOffset - data.start);
-
+        var delta = audioBuffer.timestampOffset > 0 ? Math.abs(audioBuffer.timestampOffset - data.start) : 0;
+        console.error(audioBuffer.timestampOffset, data.start);
         // adjust timestamp offset if time delta is greater than 100ms
         if (delta > 0.1) {
           var updating = audioBuffer.updating;
@@ -5626,10 +5626,7 @@ var Demuxer = function () {
       mp4: MediaSource.isTypeSupported('video/mp4'),
       mp2t: hls.config.enableMP2TPassThrough && MediaSource.isTypeSupported('video/mp2t'),
       mpeg: MediaSource.isTypeSupported('audio/mpeg'),
-      mp3: MediaSource.isTypeSupported('audio/mp4; codecs="mp3"'),
-      mp4a4034: MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.40.34"'),
-      mp4a69: MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.69"'),
-      mp4a6B: MediaSource.isTypeSupported('audio/mp4; codecs="mp4a.6B"')
+      mp3: MediaSource.isTypeSupported('audio/mp4; codecs="mp3"')
     };
     if (hls.config.enableWorker && typeof Worker !== 'undefined') {
       _logger.logger.log('demuxing in webworker');
@@ -6461,7 +6458,7 @@ var TSDemuxer = function () {
               if (stt) {
                 offset += data[offset] + 1;
               }
-              var parsedPIDs = parsePMT(data, offset);
+              var parsedPIDs = parsePMT(data, offset, this.typeSupported.mpeg === true || this.typeSupported.mp3 === true);
               avcId = avcTrack.id = parsedPIDs.avc;
               aacId = aacTrack.id = parsedPIDs.aac;
               id3Id = id3Track.id = parsedPIDs.id3;
@@ -6558,7 +6555,7 @@ var TSDemuxer = function () {
     }
   }, {
     key: '_parsePMT',
-    value: function _parsePMT(data, offset) {
+    value: function _parsePMT(data, offset, mpegSupported) {
       var sectionLength,
           tableEnd,
           programInfoLength,
@@ -6599,8 +6596,10 @@ var TSDemuxer = function () {
           // or ISO/IEC 13818-3 (MPEG-2 halved sample rate audio)
           case 0x03:
           case 0x04:
-            _logger.logger.log('MPEG PID:' + pid);
-            if (result.aac === -1) {
+            //logger.log('MPEG PID:'  + pid);
+            if (!mpegSupported) {
+              _logger.logger.log('MPEG audio found, not supported in this browser for now');
+            } else if (result.aac === -1) {
               result.aac = pid;
               result.isAAC = false;
             }
@@ -7274,38 +7273,7 @@ var TSDemuxer = function () {
 
       var track = this._aacTrack;
 
-      // Build audio config for mp4a.40.34
-      if (this.typeSupported.mp4a4034 === true) {
-        var audioConfigSampleingRates = {
-          96000: 0,
-          88200: 1,
-          64000: 2,
-          48000: 3,
-          44100: 4,
-          32000: 5,
-          24000: 6,
-          22050: 7,
-          16000: 8,
-          12000: 9,
-          11025: 10,
-          8000: 11,
-          7350: 12
-        };
-        var audioSamplingIndex = audioConfigSampleingRates[sampleRate];
-
-        track.config = new Array(4);
-        // For mp4a.40.34 we need 11 bits. More information: https://wiki.multimedia.cx/index.php?title=MPEG-4_Audio
-        track.config[0] = 31 << 3;
-        track.config[1] |= 0x01 << 6;
-        track.config[1] |= (audioSamplingIndex & 0x0F) << 1;
-        // channelConfiguration
-        track.config[1] |= (channelCount & 0x0F) >> 3;
-        track.config[2] |= (channelCount & 0x0F) << 5;
-        track.config[3] = 0;
-      } else {
-        track.config = [];
-      }
-
+      track.config = [];
       track.channelCount = channelCount;
       track.audiosamplerate = sampleRate;
       track.duration = this._duration;
@@ -9585,12 +9553,6 @@ var MP4 = function () {
     key: 'esds',
     value: function esds(track) {
       var configlen = track.config.length;
-      var mpeg4Audio = 0x40;
-      if (track.codec === 'mp4a.69') {
-        mpeg4Audio = 0x69;
-      } else if (track.codec === 'mp4a.6B') {
-        mpeg4Audio = 0x6B;
-      }
       return new Uint8Array([0x00, // version 0
       0x00, 0x00, 0x00, // flags
 
@@ -9601,7 +9563,7 @@ var MP4 = function () {
 
       0x04, // descriptor_type
       0x0f + configlen, // length
-      mpeg4Audio, //codec : mpeg4_audio
+      0x40, //codec : mpeg4_audio
       0x15, // stream_type
       0x00, 0x00, 0x00, // buffer_size
       0x00, 0x00, 0x00, 0x00, // maxBitrate
@@ -9642,10 +9604,8 @@ var MP4 = function () {
     key: 'stsd',
     value: function stsd(track) {
       if (track.type === 'audio') {
-        if (!track.isAAC) {
-          if (track.codec === 'mp3') {
-            return MP4.box(MP4.types.stsd, MP4.STSD, MP4.mp3(track));
-          }
+        if (!track.isAAC && track.codec === 'mp3') {
+          return MP4.box(MP4.types.stsd, MP4.STSD, MP4.mp3(track));
         }
         return MP4.box(MP4.types.stsd, MP4.STSD, MP4.mp4a(track));
       } else {
@@ -9918,15 +9878,6 @@ var MP4Remuxer = function () {
             // Chrome
             container = 'audio/mpeg';
             audioTrack.codec = '';
-          } else if (this.typeSupported.mp4a4034 === true) {
-            // IE
-            audioTrack.codec = 'mp4a.40.34';
-          } else if (this.typeSupported.mp4a69 === true) {
-            // IE
-            audioTrack.codec = 'mp4a.69';
-          } else if (this.typeSupported.mp4a6B === true) {
-            // IE
-            audioTrack.codec = 'mp4a.6B';
           } else if (this.typeSupported.mp3 === true) {
             // Firefox
             audioTrack.codec = 'mp3';
