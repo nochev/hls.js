@@ -10320,7 +10320,7 @@ var MP4Remuxer = function () {
       // frame.
 
       // only inject/drop audio frames in case time offset is accurate
-      if (accurateTimeOffset) {
+      if (accurateTimeOffset && track.isAAC) {
         for (var i = 0, nextPtsNorm = nextAacPts; i < samples0.length;) {
           // First, let's see how far off this frame is from where we expect it to be
           var sample = samples0[i],
@@ -10341,12 +10341,7 @@ var MP4Remuxer = function () {
               for (var j = 0; j < missing; j++) {
                 newStamp = nextPtsNorm + this._initDTS;
                 newStamp = Math.max(newStamp, this._initDTS);
-                if (track.isAAC) {
-                  fillFrame = _aac2.default.getSilentFrame(track.channelCount);
-                } else {
-                  // For mpeg audio get last frame
-                  fillFrame = sample.unit.slice(0);
-                }
+                fillFrame = _aac2.default.getSilentFrame(track.channelCount);
                 if (!fillFrame) {
                   _logger.logger.log('Unable to get silent frame for given audio codec; duplicating last frame instead.');
                   fillFrame = sample.unit.slice(0);
