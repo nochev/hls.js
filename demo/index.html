@@ -203,9 +203,9 @@ header {
   </div>
   <br><br>
 
-  <script src="../../streams.js"></script>
+  <!-- <script src="../../streams.js"></script> -->
   <!-- live-reload script -->
-  <script src="//localhost:8001"></script>
+  <!-- <script src="//localhost:8001"></script> -->
   <script src="../dist/hls.js"></script>
   <script src="canvas.js"></script>
   <script src="metrics.js"></script>
@@ -250,7 +250,7 @@ $(document).ready(function() {
   video.volume = 1;
   $("#currentVersion").html("Hls version:" + Hls.version);
 
-  loadStream(decodeURIComponent(getURLParam('src','http://www.streambox.fr/playlists/x36xhzz/x36xhzz.m3u8')));
+  loadStream(decodeURIComponent(getURLParam('src','https://player.webvideocore.net/CL1olYogIrDWvwqiIKK7eLBkzvO18gwo9ERMzsyXzwt_t-ya8ygf2kQBZww38JJT/8i4vvznv8408.m3u8')));
 
   function loadStream(url) {
     hideCanvas();
