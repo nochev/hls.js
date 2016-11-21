@@ -25,7 +25,7 @@ class DemuxerInline {
     }
   }
 
-  push(data, audioCodec, videoCodec, timeOffset, cc, level, sn, duration) {
+  push(data, audioCodec, videoCodec, timeOffset, cc, level, sn, duration,accurateTimeOffset) {
     var demuxer = this.demuxer;
     if (!demuxer) {
       let hls = this.hls,
@@ -33,9 +33,9 @@ class DemuxerInline {
       // probe for content type
       if (TSDemuxer.probe(data)) {
         if (this.typeSupported.mp2t === true) {
-          demuxer = new TSDemuxer(hls, id, PassThroughRemuxer, this.config);
+          demuxer = new TSDemuxer(hls, id, PassThroughRemuxer, this.config, this.typeSupported);
         } else {
-          demuxer = new TSDemuxer(hls, id, MP4Remuxer, this.config);
+          demuxer = new TSDemuxer(hls, id, MP4Remuxer, this.config, this.typeSupported);
         }
       } else if(AACDemuxer.probe(data)) {
         demuxer = new AACDemuxer(hls, id, MP4Remuxer, this.config);
@@ -45,7 +45,7 @@ class DemuxerInline {
       }
       this.demuxer = demuxer;
     }
-    demuxer.push(data,audioCodec,videoCodec,timeOffset,cc,level,sn,duration);
+    demuxer.push(data,audioCodec,videoCodec,timeOffset,cc,level,sn,duration,accurateTimeOffset);
   }
 }
 
