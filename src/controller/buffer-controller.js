@@ -130,6 +130,7 @@ class BufferController extends EventHandler {
       // Detach properly the MediaSource from the HTMLMediaElement as
       // suggested in https://github.com/w3c/media-source/issues/53.
       if (this.media) {
+        URL.revokeObjectURL(this.media.src);
         this.media.removeAttribute('src');
         this.media.load();
       }
@@ -200,7 +201,10 @@ class BufferController extends EventHandler {
       this.checkEos();
     }
     this.appending = false;
-    this.hls.trigger(Event.BUFFER_APPENDED, { parent : this.parent});
+    let parent = this.parent;
+    // count nb of pending segments waiting for appending on this sourcebuffer
+    let pending = this.segments.reduce( (counter, segment) => (segment.parent === parent) ? counter + 1 : counter , 0);
+    this.hls.trigger(Event.BUFFER_APPENDED, { parent : parent, pending : pending });
 
     // don't append in flushing mode
     if (!this._needsFlush) {
@@ -317,17 +321,22 @@ class BufferController extends EventHandler {
       return;
     }
     for(let type in sb) {
-      if (!sb[type].ended) {
+      let sbobj = sb[type];
+      if (!sbobj.ended) {
         return;
       }
-      if(sb[type].updating) {
+      if(sbobj.updating) {
         this._needsEos = true;
         return;
       }
     }
     logger.log('all media data available, signal endOfStream() to MediaSource and stop loading fragment');
     //Notify the media element that it now has all of the media data
-    mediaSource.endOfStream();
+    try {
+      mediaSource.endOfStream();
+    } catch(e) {
+      logger.warn('exception while calling mediaSource.endOfStream()');
+    }
     this._needsEos = false;
  }
 
@@ -371,7 +380,7 @@ class BufferController extends EventHandler {
     // not using mediaSource.duration as the browser may tweak this value
     // only update mediasource duration if its value increase, this is to avoid
     // flushing already buffered portion when switching between quality level
-    if (levelDuration > this._msDuration && levelDuration > media.duration) {
+    if ((levelDuration > this._msDuration && levelDuration > media.duration) || (media.duration === Infinity || isNaN(media.duration) )) {
       logger.log(`Updating mediasource duration to ${levelDuration.toFixed(3)}`);
       this._msDuration = mediaSource.duration = levelDuration;
     }
@@ -399,8 +408,14 @@ class BufferController extends EventHandler {
       // let's recompute this.appended, which is used to avoid flush looping
       var appended = 0;
       var sourceBuffer = this.sourceBuffer;
-      for (var type in sourceBuffer) {
-        appended += sourceBuffer[type].buffered.length;
+      try {
+        for (var type in sourceBuffer) {
+          appended += sourceBuffer[type].buffered.length;
+        }
+      } catch(error) {
+        // error could be thrown while accessing buffered, in case sourcebuffer has already been removed from MediaSource
+        // this is harmess at this stage, catch this to avoid reporting an internal exception
+        logger.error('error while accessing sourceBuffer.buffered');
       }
       this.appended = appended;
       this.hls.trigger(Event.BUFFER_FLUSHED);
@@ -420,18 +435,22 @@ class BufferController extends EventHandler {
         return;
       }
       if (segments && segments.length) {
-        var segment = segments.shift();
+        let segment = segments.shift();
         try {
-          let type = segment.type;
-          if(sourceBuffer[type]) {
-            // reset sourceBuffer ended flag before appending segment
-            sourceBuffer[type].ended = false;
-            //logger.log(`appending ${segment.content} ${segment.type} SB, size:${segment.data.length}, ${segment.parent}`);
-            this.parent = segment.parent;
-            sourceBuffer[type].appendBuffer(segment.data);
-            this.appendError = 0;
-            this.appended++;
-            this.appending = true;
+          let type = segment.type, sb = sourceBuffer[type];
+          if(sb) {
+            if(!sb.updating) {
+              // reset sourceBuffer ended flag before appending segment
+              sb.ended = false;
+              //logger.log(`appending ${segment.content} ${type} SB, size:${segment.data.length}, ${segment.parent}`);
+              this.parent = segment.parent;
+              sb.appendBuffer(segment.data);
+              this.appendError = 0;
+              this.appended++;
+              this.appending = true;
+            } else {
+              segments.unshift(segment);
+            }
           } else {
             // in case we don't have any source buffer matching with this segment type,
             // it means that Mediasource fails to create sourcebuffer
@@ -469,6 +488,7 @@ class BufferController extends EventHandler {
             // let's stop appending any segments, and report BUFFER_FULL_ERROR error
             this.segments = [];
             event.details = ErrorDetails.BUFFER_FULL_ERROR;
+            event.fatal = false;
             hls.trigger(Event.ERROR,event);
             return;
           }
@@ -498,28 +518,32 @@ class BufferController extends EventHandler {
           // we are going to flush buffer, mark source buffer as 'not ended'
           sb.ended = false;
           if (!sb.updating) {
-            for (i = 0; i < sb.buffered.length; i++) {
-              bufStart = sb.buffered.start(i);
-              bufEnd = sb.buffered.end(i);
-              // workaround firefox not able to properly flush multiple buffered range.
-              if (navigator.userAgent.toLowerCase().indexOf('firefox') !== -1 && endOffset === Number.POSITIVE_INFINITY) {
-                flushStart = startOffset;
-                flushEnd = endOffset;
-              } else {
-                flushStart = Math.max(bufStart, startOffset);
-                flushEnd = Math.min(bufEnd, endOffset);
+            try {
+              for (i = 0; i < sb.buffered.length; i++) {
+                bufStart = sb.buffered.start(i);
+                bufEnd = sb.buffered.end(i);
+                // workaround firefox not able to properly flush multiple buffered range.
+                if (navigator.userAgent.toLowerCase().indexOf('firefox') !== -1 && endOffset === Number.POSITIVE_INFINITY) {
+                  flushStart = startOffset;
+                  flushEnd = endOffset;
+                } else {
+                  flushStart = Math.max(bufStart, startOffset);
+                  flushEnd = Math.min(bufEnd, endOffset);
+                }
+                /* sometimes sourcebuffer.remove() does not flush
+                   the exact expected time range.
+                   to avoid rounding issues/infinite loop,
+                   only flush buffer range of length greater than 500ms.
+                */
+                if (Math.min(flushEnd,bufEnd) - flushStart > 0.5 ) {
+                  this.flushBufferCounter++;
+                  logger.log(`flush ${type} [${flushStart},${flushEnd}], of [${bufStart},${bufEnd}], pos:${this.media.currentTime}`);
+                  sb.remove(flushStart, flushEnd);
+                  return false;
+                }
               }
-              /* sometimes sourcebuffer.remove() does not flush
-                 the exact expected time range.
-                 to avoid rounding issues/infinite loop,
-                 only flush buffer range of length greater than 500ms.
-              */
-              if (Math.min(flushEnd,bufEnd) - flushStart > 0.5 ) {
-                this.flushBufferCounter++;
-                logger.log(`flush ${type} [${flushStart},${flushEnd}], of [${bufStart},${bufEnd}], pos:${this.media.currentTime}`);
-                sb.remove(flushStart, flushEnd);
-                return false;
-              }
+            } catch(e) {
+              logger.warn('exception while accessing sourcebuffer, it might have been removed from MediaSource');
             }
           } else {
             //logger.log('abort ' + type + ' append in progress');
