@@ -1,6 +1,6 @@
 const testStreams = require('../tests/test-streams');
 
-const defaultTestStreamUrl = testStreams['bbb'].url;
+const defaultTestStreamUrl = testStreams['mp3Audio'].url;
 
 let bufferingIdx = -1;
 
@@ -28,7 +28,7 @@ let hls,
 
 let video = $('#video')[0];
 
-video.volume = 0.05;
+video.volume = 1;
 
 $(document).ready(function() {
 
